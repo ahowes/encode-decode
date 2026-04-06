@@ -46,7 +46,6 @@ enum Operation: String, CaseIterable, Identifiable {
     case base64urlDecode
     case urlEncode
     case urlDecode
-    case samlEncode
     case samlDecode
     case jsonPrettyPrint
     case xmlPrettyPrint
@@ -61,7 +60,6 @@ enum Operation: String, CaseIterable, Identifiable {
         case .base64urlDecode:       return "Base64URL Decode"
         case .urlEncode:             return "URL Encode"
         case .urlDecode:             return "URL Decode"
-        case .samlEncode:            return "SAML Encode"
         case .samlDecode:            return "SAML Decode"
         case .jsonPrettyPrint:       return "JSON Pretty Print"
         case .xmlPrettyPrint:        return "XML Pretty Print"
@@ -74,7 +72,7 @@ enum Operation: String, CaseIterable, Identifiable {
             return .base64
         case .urlEncode, .urlDecode:
             return .url
-        case .samlEncode, .samlDecode:
+        case .samlDecode:
             return .saml
         case .jsonPrettyPrint, .xmlPrettyPrint:
             return .prettyPrint
@@ -139,22 +137,22 @@ enum Operation: String, CaseIterable, Identifiable {
             return decoded
 
         // MARK: SAML
-        // SAML 2.0 HTTP-Redirect uses raw DEFLATE (RFC 1951) — Apple's COMPRESSION_ZLIB
-        // produces raw deflate without a zlib header, which is what the spec requires.
-        case .samlEncode:
-            let deflated = try rawDeflate(Data(input.utf8))
-            return deflated.base64EncodedString()
-
         case .samlDecode:
             let padded = b64Padded(input.trimmingCharacters(in: .whitespacesAndNewlines))
-            guard let compressed = Data(base64Encoded: padded, options: .ignoreUnknownCharacters) else {
+            guard let decoded = Data(base64Encoded: padded, options: .ignoreUnknownCharacters) else {
                 throw TransformError.invalidInput("Invalid Base64 in SAML token")
             }
-            let decompressed = try rawInflate(compressed)
-            guard let s = String(data: decompressed, encoding: .utf8) else {
-                throw TransformError.invalidInput("Decompressed data is not valid UTF-8")
+            let xmlData: Data
+            if let inflated = try? rawInflate(decoded) {
+                xmlData = inflated
+            } else {
+                xmlData = decoded
             }
-            return s
+            guard let xmlString = String(data: xmlData, encoding: .utf8) else {
+                throw TransformError.invalidInput("Decoded data is not valid UTF-8")
+            }
+            let doc = try XMLDocument(xmlString: xmlString, options: [.nodePreserveAll])
+            return doc.xmlString(options: [.nodePrettyPrint])
 
         // MARK: Pretty Print
         case .jsonPrettyPrint:
@@ -176,6 +174,28 @@ enum Operation: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Auto-format output
+
+func autoFormat(_ text: String) -> String {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // Try JSON
+    if let data = trimmed.data(using: .utf8),
+       let obj = try? JSONSerialization.jsonObject(with: data),
+       let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+       let s = String(data: pretty, encoding: .utf8) {
+        return s
+    }
+
+    // Try XML
+    if (trimmed.hasPrefix("<") || trimmed.hasPrefix("<?xml")),
+       let doc = try? XMLDocument(xmlString: trimmed, options: [.nodePreserveAll]) {
+        return doc.xmlString(options: [.nodePrettyPrint])
+    }
+
+    return text
+}
+
 // MARK: - Base64 padding
 
 private func b64Padded(_ s: String) -> String {
@@ -184,23 +204,6 @@ private func b64Padded(_ s: String) -> String {
 }
 
 // MARK: - Raw DEFLATE (for SAML)
-
-private func rawDeflate(_ input: Data) throws -> Data {
-    let capacity = max(input.count * 2, 64)
-    var output = Data(count: capacity)
-    let written: Int = input.withUnsafeBytes { src in
-        output.withUnsafeMutableBytes { dst in
-            guard let s = src.baseAddress, let d = dst.baseAddress else { return 0 }
-            return compression_encode_buffer(
-                d.assumingMemoryBound(to: UInt8.self), capacity,
-                s.assumingMemoryBound(to: UInt8.self), input.count,
-                nil, COMPRESSION_ZLIB
-            )
-        }
-    }
-    guard written > 0 else { throw TransformError.invalidInput("Compression failed") }
-    return Data(output.prefix(written))
-}
 
 private func rawInflate(_ input: Data) throws -> Data {
     var capacity = max(input.count * 10, 4096)

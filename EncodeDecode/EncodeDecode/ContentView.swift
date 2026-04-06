@@ -35,8 +35,7 @@ struct ContentView: View {
 
                 VStack(spacing: spacing) {
                     GroupBox {
-                        TextEditor(text: $input)
-                            .font(.system(.body, design: .monospaced))
+                        NoWrapTextEditor(text: $input)
                     } label: {
                         Text("Input").bold()
                     }
@@ -119,10 +118,68 @@ struct ContentView: View {
         showCopied = false
         switch selectedOp.transform(input) {
         case .success(let result):
-            output = result
+            output = autoFormat(result)
         case .failure(let error):
             output = ""
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - Editable, no-wrap text view
+
+struct NoWrapTextEditor: NSViewRepresentable {
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+
+        let textView = NSTextView(frame: scrollView.bounds)
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        textView.backgroundColor = .textBackgroundColor
+        textView.textContainerInset = NSSize(width: 4, height: 4)
+        textView.isHorizontallyResizable = true
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.containerSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.delegate = context.coordinator
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        if textView.string != text {
+            textView.string = text
+        }
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: NoWrapTextEditor
+
+        init(_ parent: NoWrapTextEditor) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
         }
     }
 }
@@ -135,21 +192,24 @@ struct ReadOnlyTextView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
 
         let textView = NSTextView(frame: scrollView.bounds)
         textView.isEditable = false
         textView.isSelectable = true
+        textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         textView.backgroundColor = .textBackgroundColor
         textView.textContainerInset = NSSize(width: 4, height: 4)
-        textView.autoresizingMask = [.width]
+        textView.isHorizontallyResizable = true
         textView.isVerticallyResizable = true
-        textView.textContainer?.widthTracksTextView = true
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = false
         textView.textContainer?.containerSize = NSSize(
-            width: scrollView.contentSize.width,
-            height: .greatestFiniteMagnitude
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
         )
 
         scrollView.documentView = textView
