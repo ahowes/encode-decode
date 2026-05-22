@@ -1,6 +1,7 @@
 import Foundation
 
 import Compression
+import CryptoKit
 
 // MARK: - Error
 
@@ -19,6 +20,7 @@ enum OperationCategory: String, CaseIterable, Identifiable {
     case base64
     case url
     case saml
+    case data
     case prettyPrint
 
     var id: String { rawValue }
@@ -28,6 +30,7 @@ enum OperationCategory: String, CaseIterable, Identifiable {
         case .base64:            return "Base64"
         case .url:               return "URL"
         case .saml:              return "SAML / SSO"
+        case .data:              return "Data"
         case .prettyPrint:       return "Pretty Print"
         }
     }
@@ -47,6 +50,7 @@ enum Operation: String, CaseIterable, Identifiable {
     case urlEncode
     case urlDecode
     case samlDecode
+    case emailMask
     case jsonPrettyPrint
     case xmlPrettyPrint
 
@@ -61,6 +65,7 @@ enum Operation: String, CaseIterable, Identifiable {
         case .urlEncode:             return "URL Encode"
         case .urlDecode:             return "URL Decode"
         case .samlDecode:            return "SAML Decode"
+        case .emailMask:             return "Email Mask"
         case .jsonPrettyPrint:       return "JSON Pretty Print"
         case .xmlPrettyPrint:        return "XML Pretty Print"
         }
@@ -74,6 +79,8 @@ enum Operation: String, CaseIterable, Identifiable {
             return .url
         case .samlDecode:
             return .saml
+        case .emailMask:
+            return .data
         case .jsonPrettyPrint, .xmlPrettyPrint:
             return .prettyPrint
         }
@@ -153,6 +160,17 @@ enum Operation: String, CaseIterable, Identifiable {
             }
             let doc = try XMLDocument(xmlString: xmlString, options: [.nodePreserveAll])
             return doc.xmlString(options: [.nodePrettyPrint])
+
+        // MARK: Data
+        case .emailMask:
+            let digest = SHA256.hash(data: Data(input.utf8))
+            let b64 = Data(digest).base64EncodedString().replacingOccurrences(of: "=", with: "")
+            if b64.count <= 20 {
+                return b64
+            }
+            let prefix = String(b64.prefix(10))
+            let suffix = String(b64.suffix(10))
+            return "\(prefix)...\(suffix)"
 
         // MARK: Pretty Print
         case .jsonPrettyPrint:
